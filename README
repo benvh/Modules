@@ -1,0 +1,13 @@
+MODULES
+
+A simple lightweight annotation based IoC Container with dependency injection.
+
+The container consists of 4 import parts.
+
+1. ModuleBus (the actual container)
+2. Module (an annotation which is used to "define" a Module (kind of like a Spring Bean))
+3. Find (an annotation to inject dependencies -> other registered modules)
+4. ModuleListener (a way to listen for module registrations and do stuff with that... useful for whiteboard pattern-like things)
+
+When you create a ModuleBus you can make it scan certain parts of your classpath (or everything...).
+It will detect the Module and Find annotations and do it's magic.
