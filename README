@@ -1,11 +1,12 @@
 MODULES
 
 A simple lightweight annotation based IoC Container with dependency injection.
+It's sort of Spring Beans and OSGi's little down syndrome baby -> Spring Beans-like annotation config / container + OSGi like bundles (modules) without the runtime dynamic magic, ...
 
 The container consists of 4 import parts.
 
 1. ModuleBus (the actual container)
-2. Module (an annotation which is used to "define" a Module (kind of like a Spring Bean))
+2. Module (an annotation which is used to "define" a Module)
 3. Find (an annotation to inject dependencies -> other registered modules)
 4. ModuleListener (a way to listen for module registrations and do stuff with that... useful for whiteboard pattern-like things)
 
