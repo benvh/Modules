@@ -19,8 +19,8 @@ public class ModuleBusTest {
         try {
             bus.scan();
 
-            Foo f = (Foo)bus.find("org.vanhoutven.modules.test.Foo");
-            f.doBar();
+            RoflCopter roflCopter = (RoflCopter) bus.find("org.vanhoutven.modules.test.Roflcopter");
+            roflCopter.doRoflcopter();
 
         } catch (UnresolvedModuleDependencyException e) {
             e.printStackTrace();
@@ -48,6 +48,21 @@ class Foo {
 class Bar {
     public void doBar() {
         System.out.println("bar did bar");
+    }
+}
+
+@Module("org.vanhoutven.modules.test.Roflcopter")
+class RoflCopter {
+
+    @Find("org.vanhoutven.modules.test.Foo")
+    Foo foo;
+
+    @Find("org.vanhoutven.modules.test.Bar")
+    Bar bar;
+
+    public void doRoflcopter() {
+        foo.doBar();
+        bar.doBar();
     }
 }
 

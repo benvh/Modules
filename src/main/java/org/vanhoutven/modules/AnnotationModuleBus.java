@@ -13,12 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Iterator;
+import java.util.*;
 
 
 /**
@@ -42,89 +37,61 @@ public class AnnotationModuleBus implements ModuleBus {
     @Override
     public void scan(String basePackage) throws UnresolvedModuleDependencyException {
         List<Class> annotatedClasses = ClasspathScanner.findClassesWithAnnotation(basePackage, Module.class);
-
-        Map<ModuleContainer, List<ModuleDependency>> unresolvedModuleDependencies = new HashMap<ModuleContainer, List<ModuleDependency>>();
+        Map<Class<?>, List<ModuleDependency>> unresolvedModules = new IdentityHashMap<Class<?>, List<ModuleDependency>>();
 
         for (Class<?> clazz : annotatedClasses) {
-            try {
-                Module moduleAnnotation = clazz.getAnnotation(Module.class);
-                if(moduleAnnotation != null) {
-                    Object module = clazz.newInstance();
-                    ModuleContainer moduleContainer = createModuleContainer(moduleAnnotation.value(), module);
+            List<Field> fields = ClassScanner.getFieldsAnnotatedWith(clazz, Find.class);
+            boolean hasUnresolvedDependencies = false;
 
-                    boolean hasUnresolvedDependencies = false;
+            for (Field field : fields) {
+                Find findAnnotation = field.getAnnotation(Find.class);
 
-                    /*
-                     * Find all module dependencies and try to resolve them. If this fails we'll try again later when all modules are loaded
-                     */
-                    List<Field> fields = ClassScanner.getFieldsAnnotatedWith(module.getClass(), Find.class);
-                    for(Field field : fields) {
-                        Find findAnnotation = field.getAnnotation(Find.class);
-                        try {
-                            if(registeredModules.containsKey(findAnnotation.value())) {
-                                field.setAccessible(true);
-                                field.set( module, registeredModules.get(findAnnotation.value()).getModule() );
-                                field.setAccessible(false);
-                            } else {
-                                if(!unresolvedModuleDependencies.containsKey(moduleContainer)) {
-                                    unresolvedModuleDependencies.put( moduleContainer, new ArrayList<ModuleDependency>() );
-                                }
-                                unresolvedModuleDependencies.get(moduleContainer).add( new ModuleDependency(field) );
-                                hasUnresolvedDependencies = true;
-                            }
-                        } catch (IllegalAccessException e) {
-                            LOGGER.error("Failed to resolve dependency!", e);
-                        }
+                if (!registeredModules.containsKey(findAnnotation.value())) {
+                    hasUnresolvedDependencies = true;
+
+                    List<ModuleDependency> dependencies = new ArrayList<ModuleDependency>();
+                    for (Field fieldInception : fields) {
+                        dependencies.add(new ModuleDependency(fieldInception));
                     }
-
-
-
-                    if(!hasUnresolvedDependencies) {
-                        if(moduleContainer.doesImplement( ModuleListener.class ) ) {
-                            LOGGER.debug("Registered new ModuleListener `" + moduleAnnotation.value() + "`");
-                            registerModuleListener( (ModuleListener)module ); //ModuleListeners aren't really registered as actual modules *snicker
-                        } else {
-                            register(moduleContainer);
-                        }
-                    }
+                    unresolvedModules.put(clazz, dependencies);
+                    break;
                 }
-            } catch (InstantiationException e) {
-                LOGGER.error("Failed to resolve dependency!", e);
-            } catch (IllegalAccessException e) {
-                LOGGER.error("Failed to resolve dependency!", e);
+            }
+
+            if (!hasUnresolvedDependencies) {
+                createAndRegisterModuleContainer(clazz, fields);
             }
         }
 
-        /*
-         * Now that all modules are loaded all the outstanding module dependencies  resolved...
-         */
-        for(Map.Entry<ModuleContainer, List<ModuleDependency>> entry : unresolvedModuleDependencies.entrySet()) {
+        while (!unresolvedModules.isEmpty()) {
+            for (Map.Entry<Class<?>, List<ModuleDependency>> entry : unresolvedModules.entrySet()) {
+                Class<?> clazz = entry.getKey();
+                List<ModuleDependency> dependencies = entry.getValue();
 
-            ModuleContainer container = entry.getKey();
-            List<ModuleDependency> dependencies = entry.getValue();
+                //might be registered by now...
+                if (!registeredModules.containsKey(clazz.getAnnotation(Module.class).value())) {
 
-            Iterator<ModuleDependency> it = dependencies.iterator();
-            LOGGER.debug("Resolving dependencies for module `" + container.getName() + "`");
-            while(it.hasNext()) {
-                ModuleDependency dependency = it.next();
-                if(!registeredModules.containsKey(dependency.getRequiredModuleName())) {
-                    throw new UnresolvedModuleDependencyException(container.getModule().getClass(), dependency.getRequiredModuleName());
-                } else {
-                    try {
-                        dependency.getField().set(container.getModule(), registeredModules.get( dependency.getRequiredModuleName() ).getModule() );
-                        LOGGER.debug("Dependency `" + dependency.getField().getName() + "` for module `" + container.getName() + "` resolved");
-                        it.remove();
-                    } catch (IllegalAccessException e) {
-                        LOGGER.error("Failed to resolve dependency!", e);
+                    boolean stillHasUnresolvedDependencies = false;
+
+                    for (ModuleDependency dependency : dependencies) {
+                        if (!registeredModules.containsKey(dependency.getRequiredModuleName())) {
+                            if (!unresolvedModules.containsKey(dependency.getField().getType())) {
+                                throw new UnresolvedModuleDependencyException(clazz, dependency.getRequiredModuleName());
+                            }
+                            stillHasUnresolvedDependencies = true;
+                        }
+                    }
+
+                    if (!stillHasUnresolvedDependencies) {
+                        List<Field> fields = new ArrayList<Field>();
+                        //Todo: Probably should remove the useless ModuleDependency class...
+                        for (ModuleDependency moduleDependency : dependencies) {
+                            fields.add(moduleDependency.getField());
+                        }
+                        createAndRegisterModuleContainer(clazz, fields);
+                        unresolvedModules.remove(clazz);
                     }
                 }
-            }
-
-            if(!dependencies.isEmpty()) {
-                //wot? we should have thrown an UnresolvedDependencyException by now...
-                throw new UnresolvedModuleDependencyException("Tried to divide by 0... :(");
-            } else {
-                register(container);
             }
         }
     }
@@ -176,6 +143,31 @@ public class AnnotationModuleBus implements ModuleBus {
     private ModuleContainer createModuleContainer(String name, Object module) {
         Class<?> clazz = module.getClass();
         return new ModuleContainer(name, clazz, Arrays.asList(clazz.getInterfaces()), module);
+    }
+
+    private void createAndRegisterModuleContainer(Class<?> clazz, List<Field> fields) {
+        try {
+            Object module = clazz.newInstance();
+            Module moduleAnnotation = clazz.getAnnotation(Module.class);
+            ModuleContainer container = createModuleContainer(moduleAnnotation.value(), module);
+
+            for (Field field : fields) {
+                field.setAccessible(true);
+                field.set(module, registeredModules.get(field.getAnnotation(Find.class).value()).getModule());
+                field.setAccessible(false);
+            }
+
+            register(container);
+
+            if (container.doesImplement(ModuleListener.class)) {
+                registerModuleListener((ModuleListener) container.getModule());
+            }
+
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
     }
 
     private void notifyModuleListeners(ModuleContainer moduleContainer) {
